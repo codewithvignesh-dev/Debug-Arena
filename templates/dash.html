@@ -1,0 +1,34 @@
+{% extends 'base.html' %}{% block title %}{{role|capitalize}} dashboard{% endblock %}
+{% block body %}<main class="max-w-6xl mx-auto p-4 md:p-8 space-y-6">
+<header class="flex flex-wrap items-center justify-between gap-3"><div><h1 class="text-2xl font-bold">{{role|capitalize}} dashboard</h1>
+<p class="text-slate-400 text-sm">Updates every 3 seconds · Event: <b id="evb">…</b></p></div><a href="/logout" class="glass px-4 py-2 text-sm">Sign out</a></header>
+{% if m %}<p class="glass p-3 text-emerald-300 text-sm">{{m}}</p>{% endif %}
+<section class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-3">
+{% for k,l,c in [('total','Registered','text-slate-100'),('new','Not started','text-slate-400'),('run','In progress','text-amber-300'),('done','Completed','text-emerald-300'),('dq','Disqualified','text-rose-400'),('correct','Correct answers','text-emerald-300'),('wrong','Wrong answers','text-rose-300'),('skipped','Skipped','text-slate-300')] %}
+<div class="glass p-4"><p class="text-3xl font-bold mono {{c}}" id="s_{{k}}">0</p><p class="text-xs text-slate-400 mt-1">{{l}}</p></div>{% endfor %}</section>
+<div class="h-2 rounded bg-white/10"><div id="pb" class="h-full rounded bg-emerald-400 transition-all" style="width:0"></div></div>
+<section class="grid lg:grid-cols-3 gap-6">
+<div class="glass p-5 lg:col-span-1"><h2 class="font-bold mb-3">Alerts</h2><div id="alerts" class="space-y-2 max-h-80 overflow-y-auto"></div></div>
+{% if role=='admin' %}<div class="glass p-5 lg:col-span-2 space-y-4"><h2 class="font-bold">Event control</h2>
+<form method="post" action="/admin/ev" class="flex flex-wrap gap-2"><input type="hidden" name="_t" value="{{t}}">
+<button name="v" value="wait" class="glass px-4 py-2">Waiting</button><button name="v" value="live" class="btn">Go live</button><button name="v" value="done" class="glass px-4 py-2 text-emerald-300">Mark completed</button></form>
+<form method="post" action="/admin/show" class="inline"><input type="hidden" name="_t" value="{{t}}"><button class="glass px-4 py-2 text-sm">Show / hide results table</button></form>
+<form method="post" action="/admin/reset" class="inline" onsubmit="return confirm('Delete all attempts and alerts?')"><input type="hidden" name="_t" value="{{t}}"><button class="glass px-4 py-2 text-sm text-rose-300">Reset event</button></form>
+<form method="post" action="/admin/students" class="space-y-2"><input type="hidden" name="_t" value="{{t}}"><label class="text-sm text-slate-400">Import students — one per line: Name, RegNo</label>
+<textarea name="data" rows="4" class="inp mono text-sm" placeholder="Vigneshwaran P, 2526K1350"></textarea><button class="btn">Import students</button></form>
+<div class="border-t border-white/10 pt-4 space-y-3"><h2 class="font-bold">Staff accounts</h2>
+<form method="post" action="/admin/staff" class="flex flex-wrap gap-2"><input type="hidden" name="_t" value="{{t}}"><input class="inp" style="width:11rem" name="u" placeholder="Username" required><input class="inp" style="width:11rem" name="p" type="password" placeholder="Password (min 6)" required><button class="btn">Add staff</button></form>
+{% for x in staff %}<form method="post" action="/admin/staff/del" class="flex items-center justify-between glass px-4 py-2 text-sm" onsubmit="return confirm('Remove this staff account?')"><input type="hidden" name="_t" value="{{t}}"><input type="hidden" name="id" value="{{x.id}}"><span class="mono">{{x.username}}</span><button class="text-rose-300">Remove</button></form>{% else %}<p class="text-slate-500 text-sm">No staff accounts yet.</p>{% endfor %}</div></div>{% endif %}</section>
+<section class="glass p-5"><div class="flex items-center justify-between mb-3"><h2 class="font-bold">Results</h2><a id="exp" href="/export.xlsx" class="btn text-sm hidden">Export Excel</a></div>
+<p id="lock" class="text-slate-400 text-sm">Results appear here after the event is marked completed and the admin enables them.</p>
+<div id="res" class="hidden overflow-x-auto"><table class="w-full text-sm"><thead class="text-left text-slate-400"><tr><th class="p-2">Rank</th><th>Reg no</th><th>Name</th><th>Status</th><th>Score</th><th>Correct</th><th>Wrong</th><th>Skipped</th><th>Time</th><th>Warnings</th></tr></thead><tbody id="tb" class="divide-y divide-white/5"></tbody></table></div></section></main>
+<script>
+const $=i=>document.getElementById(i),esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+async function poll(){try{const d=await(await fetch('/api/stats')).json();
+ for(const k of ['total','new','run','done','dq','correct','wrong','skipped'])$('s_'+k).textContent=d[k];
+ $('evb').textContent={wait:'Waiting',live:'LIVE',done:'Completed'}[d.ev];$('pb').style.width=d.total?((d.done+d.dq)/d.total*100)+'%':'0';
+ $('alerts').innerHTML=d.alerts.length?d.alerts.map(a=>'<div class="rounded-lg p-3 text-sm '+(a.msg.startsWith('DISQ')?'bg-rose-500/15 border border-rose-500/40':'bg-amber-500/10 border border-amber-500/30')+'"><b class="mono">'+esc(a.reg)+'</b> · '+esc(a.msg)+'<div class="text-xs text-slate-400">'+new Date(a.ts*1000).toLocaleTimeString()+'</div></div>').join(''):'<p class="text-slate-500 text-sm">No alerts yet.</p>';
+ const ok=!!d.rows;$('res').classList.toggle('hidden',!ok);$('exp').classList.toggle('hidden',!ok);$('lock').classList.toggle('hidden',ok);
+ if(ok)$('tb').innerHTML=d.rows.map(r=>'<tr><td class="p-2">'+r.rank+'</td><td class="mono">'+esc(r.reg)+'</td><td>'+esc(r.name)+'</td><td>'+esc(r.sl)+'</td><td class="font-bold">'+r.score+'/100</td><td class="text-emerald-300">'+r.c+'</td><td class="text-rose-300">'+r.w+'</td><td>'+r.un+'</td><td class="mono">'+(r.tt?Math.floor(r.tt/60)+':'+String(r.tt%60).padStart(2,'0'):'-')+'</td><td>'+r.viol+'</td></tr>').join('')}catch(e){}}
+poll();setInterval(poll,3000);
+</script>{% endblock %}

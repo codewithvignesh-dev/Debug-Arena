@@ -1,0 +1,17 @@
+{% extends 'base.html' %}{% block title %}Sign in · Debug Arena{% endblock %}
+{% block body %}<main class="min-h-screen grid place-items-center p-4">
+<form method="post" class="glass w-full max-w-md p-8 space-y-5">
+<input type="hidden" name="_t" value="{{t}}"><input type="hidden" name="role" id="role" value="student">
+<div><h1 class="text-3xl font-bold">Debug Arena</h1><p class="text-slate-400 mt-1">Find the bug. Fix it. Type the output.</p></div>
+<div class="grid grid-cols-3 gap-1 p-1 rounded-xl bg-black/30" id="tabs">
+{% for r in ['student','staff','admin'] %}<button type="button" data-r="{{r}}" class="tab py-2 rounded-lg capitalize text-sm">{{r}}</button>{% endfor %}</div>
+{% if err %}<p class="text-rose-300 text-sm bg-rose-500/10 border border-rose-500/30 rounded-lg p-3">{{err}}</p>{% endif %}
+<div><label class="text-sm text-slate-400" id="ul">Register number</label><input class="inp mono mt-1" name="u" id="u" placeholder="2526K1350" required autocomplete="off"></div>
+<div><label class="text-sm text-slate-400">Password</label><input class="inp mt-1" type="password" name="p" required></div>
+<button class="btn w-full">Sign in</button></form></main>
+<script>
+const tabs=document.querySelectorAll('.tab');
+function pick(r){document.getElementById('role').value=r;document.getElementById('ul').textContent=r=='student'?'Register number':'Username';document.getElementById('u').placeholder=r=='student'?'2526K1350':'username';
+tabs.forEach(b=>b.className='tab py-2 rounded-lg capitalize text-sm '+(b.dataset.r==r?'bg-indigo-500 font-bold':'text-slate-400'))}
+tabs.forEach(b=>b.onclick=()=>pick(b.dataset.r));pick('student');
+</script>{% endblock %}

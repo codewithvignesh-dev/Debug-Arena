@@ -1,0 +1,37 @@
+{% extends 'base.html' %}{% block title %}Debug Session{% endblock %}
+{% block body %}
+{% if mode=='wait' %}<meta http-equiv="refresh" content="5">
+<main class="min-h-screen grid place-items-center p-4"><div class="glass p-10 max-w-md text-center">
+<div class="mx-auto mb-5 h-10 w-10 rounded-full border-4 border-indigo-400 border-t-transparent animate-spin"></div>
+<h1 class="text-2xl font-bold">Welcome, {{s.name}}</h1><p class="text-slate-400 mt-2">The event has not started yet. This page will open your first question automatically.</p>
+<a href="/logout" class="text-sm text-slate-500 underline mt-6 inline-block">Sign out</a></div></main>
+{% else %}
+<div id="main" class="max-w-3xl mx-auto p-4 md:p-8 select-none">
+<header class="flex items-center justify-between mb-6"><div><p class="font-bold">{{s.name}}</p><p class="mono text-xs text-slate-400">{{s.reg}}</p></div>
+<div id="timer" class="mono text-3xl font-bold glass px-5 py-2">01:30</div></header>
+<div class="h-1.5 rounded bg-white/10 mb-6"><div id="bar" class="h-full rounded bg-indigo-400 transition-all" style="width:0"></div></div>
+<section class="glass p-6 space-y-4"><div class="flex justify-between"><h2 id="title" class="text-xl font-bold"></h2><span id="qn" class="text-slate-400 text-sm"></span></div>
+<pre id="code" class="mono text-sm leading-relaxed bg-black/50 rounded-xl p-4 overflow-x-auto border border-white/10"></pre>
+<p class="text-slate-400 text-sm">You have 90 seconds. Unanswered questions are skipped. Fix the bug, then type the exact output of the <b class="text-slate-200">corrected</b> program.</p>
+<div class="flex gap-3"><input id="ans" class="inp mono select-text" autocomplete="off" placeholder="Output"><button id="go" class="btn">Submit answer</button></div></section></div>
+<div id="end" class="hidden min-h-screen grid place-items-center p-4"><div class="glass p-10 max-w-md text-center"><h1 class="text-2xl font-bold">Session ended</h1><p id="endmsg" class="text-slate-300 mt-2"></p><a href="/logout" class="btn inline-block mt-6">Sign out</a></div></div>
+<div id="warn" class="hidden fixed inset-0 bg-black/70 grid place-items-center p-4 z-50"><div class="glass p-8 max-w-sm text-center border-rose-500/50"><h3 class="text-xl font-bold text-rose-300">Warning</h3><p id="wt" class="mt-2 text-slate-200"></p><button class="btn mt-5" onclick="warn.classList.add('hidden')">I understand</button></div></div>
+<script>
+const $=i=>document.getElementById(i),H={'Content-Type':'application/json','X-T':'{{t}}'};let cq=0,endAt=0,live=false,busy=false,lock=false;
+const api=(u,b)=>fetch(u,{method:b?'POST':'GET',headers:H,body:b?JSON.stringify(b):undefined}).then(r=>r.json());
+function show(d){busy=false;
+ if(d.st!=='run'){live=false;$('main').classList.add('hidden');$('end').classList.remove('hidden');$('endmsg').textContent=d.st==='dq'?'You were disqualified for repeatedly leaving the exam tab.':'Your answers are submitted. Thank you for taking part!';return}
+ live=true;cq=d.n;endAt=Date.now()+d.left*1000;$('qn').textContent='Question '+d.n+' of '+d.total+' · 10 marks';$('bar').style.width=((d.n-1)/d.total*100)+'%';
+ $('title').textContent=d.title;$('code').textContent=d.code;$('ans').value='';$('ans').focus()}
+setInterval(()=>{if(!live)return;const s=Math.max(0,Math.round((endAt-Date.now())/1000));$('timer').textContent=String(Math.floor(s/60)).padStart(2,'0')+':'+String(s%60).padStart(2,'0');
+ $('timer').className='mono text-3xl font-bold glass px-5 py-2'+(s<15?' text-rose-400 animate-pulse':'');if(s<=0&&!busy){busy=true;api('/api/answer',{a:$('ans').value.trim(),n:cq}).then(show).catch(()=>busy=false)}},500);
+function send(){const a=$('ans').value.trim();if(busy||!a)return;busy=true;api('/api/answer',{a,n:cq}).then(show).catch(()=>busy=false)}
+$('go').onclick=send;$('ans').onkeydown=e=>{if(e.key==='Enter')send()};
+function bad(){if(!live||lock)return;lock=true;setTimeout(()=>lock=false,3000);api('/api/viol',{}).then(d=>{if(d.st!=='run')return show(d);
+ if(d.v==1)$('wt').textContent='Warning 1 of 3: you left the exam tab. If you Do it again the Invigilator staff will be notified.';
+ else if(d.v==2)$('wt').textContent='Warning 2 of 3: staff has been notified. If you done this One more time you will be disqualified.';else return;$('warn').classList.remove('hidden')})}
+document.addEventListener('visibilitychange',()=>{if(document.hidden)bad()});addEventListener('blur',bad);
+['copy','cut','paste','contextmenu','dragstart'].forEach(e=>addEventListener(e,ev=>ev.preventDefault()));
+addEventListener('keydown',e=>{if(e.key==='F12'||(e.ctrlKey&&'cvxuspaCVXUSPA'.includes(e.key)))e.preventDefault()});
+api('/api/q').then(show);
+</script>{% endif %}{% endblock %}
