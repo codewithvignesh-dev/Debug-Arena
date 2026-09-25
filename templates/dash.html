@@ -24,10 +24,10 @@
 {% for x in staff %}<form method="post" action="/admin/staff/del" class="flex items-center justify-between glass px-4 py-2 text-sm" onsubmit="return confirm('Remove this staff account?')"><input type="hidden" name="_t" value="{{t}}"><input type="hidden" name="id" value="{{x.id}}"><span class="mono">{{x.username}}</span><button class="text-rose-300">Remove</button></form>{% else %}<p class="text-slate-500 text-sm">No staff accounts yet.</p>{% endfor %}</div></div>{% endif %}</section>
 {% if role=='admin' %}<section class="glass p-5">
 <div class="flex flex-wrap items-center justify-between gap-3 mb-3"><h2 class="font-bold">Manage students</h2><input id="stu_q" class="inp text-sm" style="max-width:240px" placeholder="Search register no or name"></div>
-<p class="text-slate-400 text-xs mb-3">Edit a row and click Save to rename, change the register number, or set a new password (leave the password box blank to keep the current one). Delete removes that student's login and attempt data.</p>
+<p class="text-slate-400 text-xs mb-3">Edit a row and click Save to rename, change the register number, switch between Typed and MCQ, or set a new password (leave the password box blank to keep the current one). First-year register numbers (2026U···) are set to MCQ automatically on import. Delete removes that student's login and attempt data.</p>
 <div class="overflow-x-auto max-h-[28rem] overflow-y-auto"><table class="w-full text-sm">
-<thead class="text-left text-slate-400 sticky top-0" style="background:#0a0e1a"><tr><th class="p-2">Register No</th><th>Name</th><th>Status</th><th>New password</th><th></th></tr></thead>
-<tbody id="stu_tb"><tr><td colspan="5" class="p-3 text-slate-500">Loading…</td></tr></tbody></table></div></section>{% endif %}
+<thead class="text-left text-slate-400 sticky top-0" style="background:#0a0e1a"><tr><th class="p-2">Register No</th><th>Name</th><th>Status</th><th>Exam type</th><th>New password</th><th></th></tr></thead>
+<tbody id="stu_tb"><tr><td colspan="6" class="p-3 text-slate-500">Loading…</td></tr></tbody></table></div></section>{% endif %}
 <section class="glass p-5"><div class="flex items-center justify-between mb-3"><h2 class="font-bold">Results</h2><a id="exp" href="/export.xlsx" class="btn text-sm hidden">Export Excel</a></div>
 <p id="lock" class="text-slate-400 text-sm">Results appear here after the event is marked completed and the admin enables them.</p>
 <div id="res" class="hidden overflow-x-auto"><table class="w-full text-sm"><thead class="text-left text-slate-400"><tr><th class="p-2">Rank</th><th>Reg no</th><th>Name</th><th>Status</th><th>Score</th><th>Correct</th><th>Wrong</th><th>Skipped</th><th>Time</th><th>Warnings</th></tr></thead><tbody id="tb" class="divide-y divide-white/5"></tbody></table></div></section></main>
@@ -51,17 +51,18 @@ if($('stu_tb')){
    '<td class="p-2"><input class="inp mono text-xs" style="width:9rem" value="'+esc(r.reg)+'" data-f="reg"></td>'+
    '<td><input class="inp text-xs" style="width:12rem" value="'+esc(r.name)+'" data-f="name"></td>'+
    '<td class="text-xs text-slate-400">'+esc(r.status)+'</td>'+
+   '<td><select class="inp text-xs" style="width:7rem" data-f="mcq"><option value="0"'+(r.mcq?'':' selected')+'>Typed</option><option value="1"'+(r.mcq?' selected':'')+'>MCQ</option></select></td>'+
    '<td><input class="inp text-xs" style="width:10rem" placeholder="leave blank to keep" data-f="pw"></td>'+
    '<td class="whitespace-nowrap"><button class="text-indigo-300 text-xs mr-3 save">Save</button><button class="text-rose-300 text-xs del">Delete</button></td></tr>').join('')
-   :'<tr><td colspan="5" class="p-3 text-slate-500">No students found.</td></tr>';
+   :'<tr><td colspan="6" class="p-3 text-slate-500">No students found.</td></tr>';
  }
- async function loadStu(){try{allStu=await(await fetch('/api/students')).json();renderStu()}catch(e){$('stu_tb').innerHTML='<tr><td colspan="5" class="p-3 text-rose-300">Could not load students.</td></tr>'}}
+ async function loadStu(){try{allStu=await(await fetch('/api/students')).json();renderStu()}catch(e){$('stu_tb').innerHTML='<tr><td colspan="6" class="p-3 text-rose-300">Could not load students.</td></tr>'}}
  $('stu_q').addEventListener('input',renderStu);
  $('stu_tb').addEventListener('click',async e=>{
   const tr=e.target.closest('tr[data-id]'); if(!tr) return; const id=tr.dataset.id;
   if(e.target.classList.contains('save')){
-   const reg=tr.querySelector('[data-f=reg]').value.trim(),name=tr.querySelector('[data-f=name]').value.trim(),password=tr.querySelector('[data-f=pw]').value.trim();
-   const d=await(await fetch('/api/student/update',{method:'POST',headers:H,body:JSON.stringify({id,reg,name,password})})).json();
+   const reg=tr.querySelector('[data-f=reg]').value.trim(),name=tr.querySelector('[data-f=name]').value.trim(),password=tr.querySelector('[data-f=pw]').value.trim(),mcq=tr.querySelector('[data-f=mcq]').value;
+   const d=await(await fetch('/api/student/update',{method:'POST',headers:H,body:JSON.stringify({id,reg,name,password,mcq})})).json();
    if(!d.ok){alert(d.error||'Could not save changes.');return}
    await loadStu();
   }

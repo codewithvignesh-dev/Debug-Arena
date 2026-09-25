@@ -1,4 +1,4 @@
-import os, re, io, time, random, secrets, hmac, functools
+import os, re, io, json, time, random, secrets, hmac, functools
 import pymysql
 from flask import Flask, request, session, redirect, render_template, jsonify, send_file, abort
 from werkzeug.security import generate_password_hash, check_password_hash as cph
@@ -28,12 +28,16 @@ def q(sql, a=(), one=False):
 def init():
     for s in [
         "CREATE TABLE IF NOT EXISTS users(id INT AUTO_INCREMENT PRIMARY KEY, username VARCHAR(50) UNIQUE, pw VARCHAR(255), role VARCHAR(10))",
-        "CREATE TABLE IF NOT EXISTS students(id INT AUTO_INCREMENT PRIMARY KEY, reg VARCHAR(20) UNIQUE, name VARCHAR(80), pw VARCHAR(255), status VARCHAR(8) DEFAULT 'new', st BIGINT DEFAULT 0, et BIGINT DEFAULT 0, viol INT DEFAULT 0, lv BIGINT DEFAULT 0, qst BIGINT DEFAULT 0)",
-        "CREATE TABLE IF NOT EXISTS sq(id INT AUTO_INCREMENT PRIMARY KEY, sid INT, pos INT, title VARCHAR(60), code TEXT, ans VARCHAR(40), given VARCHAR(40) NULL, ok TINYINT NULL, at BIGINT DEFAULT 0, INDEX(sid))",
+        "CREATE TABLE IF NOT EXISTS students(id INT AUTO_INCREMENT PRIMARY KEY, reg VARCHAR(20) UNIQUE, name VARCHAR(80), pw VARCHAR(255), status VARCHAR(8) DEFAULT 'new', st BIGINT DEFAULT 0, et BIGINT DEFAULT 0, viol INT DEFAULT 0, lv BIGINT DEFAULT 0, qst BIGINT DEFAULT 0, mcq TINYINT DEFAULT 0)",
+        "CREATE TABLE IF NOT EXISTS sq(id INT AUTO_INCREMENT PRIMARY KEY, sid INT, pos INT, title VARCHAR(60), code TEXT, ans VARCHAR(40), opts TEXT NULL, given VARCHAR(40) NULL, ok TINYINT NULL, at BIGINT DEFAULT 0, INDEX(sid))",
         "CREATE TABLE IF NOT EXISTS alerts(id INT AUTO_INCREMENT PRIMARY KEY, reg VARCHAR(20), msg VARCHAR(120), ts BIGINT)",
         "CREATE TABLE IF NOT EXISTS settings(k VARCHAR(20) PRIMARY KEY, v VARCHAR(20))"]:
         q(s)
     try: q("ALTER TABLE students ADD COLUMN qst BIGINT DEFAULT 0")
+    except Exception: pass
+    try: q("ALTER TABLE students ADD COLUMN mcq TINYINT DEFAULT 0")
+    except Exception: pass
+    try: q("ALTER TABLE sq ADD COLUMN opts TEXT NULL")
     except Exception: pass
     q("INSERT IGNORE INTO settings VALUES('ev','wait'),('show','0')")
     q("INSERT INTO users(username,pw,role) VALUES(%s,%s,'admin') ON DUPLICATE KEY UPDATE pw=VALUES(pw), role='admin'", (E('ADMIN_USER'), gph(E('ADMIN_PASS'))))
@@ -48,7 +52,7 @@ def sweep():
     q("UPDATE students SET status='done' WHERE status='run' AND (et<%s OR %s)", (int(time.time()), 1 if ev() == 'done' else 0))
 def me():
     return q("SELECT * FROM students WHERE id=%s", (session.get('sid'),), True) if session.get('sid') else None
-def cur(sid): return q("SELECT id,pos,title,code,ans FROM sq WHERE sid=%s AND given IS NULL ORDER BY pos LIMIT 1", (sid,), True)
+def cur(sid): return q("SELECT id,pos,title,code,ans,opts FROM sq WHERE sid=%s AND given IS NULL ORDER BY pos LIMIT 1", (sid,), True)
 def sync(s):
     if s['status'] != 'run': return s
     now = int(time.time())
@@ -60,13 +64,36 @@ def sync(s):
     if s['status'] == 'run' and (now > s['et'] or ev() == 'done' or not cur(s['id'])): s['status'] = 'done'
     if s['status'] == 'done': q("UPDATE students SET status='done' WHERE id=%s AND status='run'", (s['id'],))
     return s
+def mcq_options(ans, r):
+    """Build 4 shuffled options (one correct) for a numeric-answer question."""
+    opts = {ans}
+    try:
+        base = int(ans)
+        deltas = [d for d in range(-6, 7) if d != 0]
+        r.shuffle(deltas)
+        for d in deltas:
+            if len(opts) == 4: break
+            cand = str(base + d)
+            if cand != ans and base + d >= 0: opts.add(cand)
+        tries = 0
+        while len(opts) < 4 and tries < 50:
+            cand = str(max(0, base + r.randint(-25, 25))); opts.add(cand); tries += 1
+    except ValueError:
+        for p in ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '10']:
+            if len(opts) == 4: break
+            if p != ans: opts.add(p)
+    lst = list(opts)[:4]
+    r.shuffle(lst)
+    return lst
+
 def start(s):
     now = int(time.time())
     if q("UPDATE students SET status='run',st=%s,et=%s,qst=%s WHERE id=%s AND status='new'", (now, now + QN * (QT + GR), now, s['id'])) != 1: return
     r = random.Random(secrets.randbits(64))
     pick = r.sample(QBANK, QN)  # 10 unique questions out of the 100-question bank, own shuffled order per student
     for i, t in enumerate(pick):
-        q("INSERT INTO sq(sid,pos,title,code,ans) VALUES(%s,%s,%s,%s,%s)", (s['id'], i, t['title'], t['code'], t['answer']))
+        opts = json.dumps(mcq_options(t['answer'], r)) if s['mcq'] else None
+        q("INSERT INTO sq(sid,pos,title,code,ans,opts) VALUES(%s,%s,%s,%s,%s,%s)", (s['id'], i, t['title'], t['code'], t['answer'], opts))
 
 def need(*roles):
     def d(f):
@@ -130,7 +157,8 @@ def api_q():
     row = cur(s['id'])
     if not row:
         q("UPDATE students SET status='done' WHERE id=%s", (s['id'],)); return jsonify(st='done')
-    return jsonify(st='run', n=row['pos'] + 1, total=QN, title=row['title'], code=row['code'], left=max(0, int(s['qst'] + QT - time.time())))
+    return jsonify(st='run', n=row['pos'] + 1, total=QN, title=row['title'], code=row['code'],
+                   opts=json.loads(row['opts']) if row['opts'] else None, left=max(0, int(s['qst'] + QT - time.time())))
 
 @app.route('/api/answer', methods=['POST'])
 def api_a():
@@ -221,6 +249,7 @@ def a_reset():
     return redirect('/dash?m=Event reset')
 
 REG_RE = re.compile(r'^[0-9A-Z]{6,12}$')  # register no: letters+digits, no spaces (e.g. 2026U437, 25U11C001, 2422K0838)
+FIRSTYEAR_RE = re.compile(r'^2026U\d{3}$')  # this batch's first-year reg-no format -> gets MCQ questions instead of typed answers
 
 def import_pairs(pairs):
     """pairs: list of (cell_a, cell_b) from a pasted line or a spreadsheet row, order unknown."""
@@ -233,8 +262,9 @@ def import_pairs(pairs):
         else: skipped += 1; continue
         reg, name = reg.upper(), name[:80]
         pw = name[:3].capitalize() + '@sngc#' + reg[-3:]  # first 3 letters of name + @sngc# + last 3 characters of register no
+        mcq = 1 if FIRSTYEAR_RE.match(reg) else 0
         try:
-            q("INSERT INTO students(reg,name,pw) VALUES(%s,%s,%s) ON DUPLICATE KEY UPDATE name=VALUES(name), pw=VALUES(pw)", (reg, name, gph(pw)))
+            q("INSERT INTO students(reg,name,pw,mcq) VALUES(%s,%s,%s,%s) ON DUPLICATE KEY UPDATE name=VALUES(name), pw=VALUES(pw), mcq=VALUES(mcq)", (reg, name, gph(pw), mcq))
             n += 1
         except Exception:
             skipped += 1
@@ -273,20 +303,21 @@ def a_students_xlsx():
 @app.route('/api/students')
 @need('admin')
 def api_students():
-    return jsonify(q("SELECT id,reg,name,status FROM students ORDER BY reg"))
+    return jsonify(q("SELECT id,reg,name,status,mcq FROM students ORDER BY reg"))
 
 @app.route('/api/student/update', methods=['POST'])
 @need('admin')
 def api_student_update():
     d = request.get_json(silent=True) or {}
     sid, reg, name, pwd = d.get('id'), str(d.get('reg', '')).strip().upper(), str(d.get('name', '')).strip()[:80], str(d.get('password', '')).strip()
+    mcq = 1 if str(d.get('mcq', '0')) in ('1', 'true', 'True') else 0
     if not sid or not REG_RE.match(reg) or not name:
         return jsonify(ok=False, error='Enter a valid register number and name.')
     if pwd and len(pwd) < 4:
         return jsonify(ok=False, error='Password must be at least 4 characters.')
     try:
-        if pwd: q("UPDATE students SET reg=%s,name=%s,pw=%s WHERE id=%s", (reg, name, gph(pwd), sid))
-        else: q("UPDATE students SET reg=%s,name=%s WHERE id=%s", (reg, name, sid))
+        if pwd: q("UPDATE students SET reg=%s,name=%s,pw=%s,mcq=%s WHERE id=%s", (reg, name, gph(pwd), mcq, sid))
+        else: q("UPDATE students SET reg=%s,name=%s,mcq=%s WHERE id=%s", (reg, name, mcq, sid))
     except pymysql.err.IntegrityError:
         return jsonify(ok=False, error='That register number is already used by another student.')
     return jsonify(ok=True)
