@@ -2,6 +2,7 @@ import os, re, io, time, random, secrets, hmac, functools
 import pymysql
 from flask import Flask, request, session, redirect, render_template, jsonify, send_file, abort
 from werkzeug.security import generate_password_hash, check_password_hash as cph
+from openpyxl import load_workbook
 from dotenv import load_dotenv
 load_dotenv()
 E = os.environ.get
@@ -38,28 +39,8 @@ def init():
     q("INSERT INTO users(username,pw,role) VALUES(%s,%s,'admin') ON DUPLICATE KEY UPDATE pw=VALUES(pw), role='admin'", (E('ADMIN_USER'), gph(E('ADMIN_PASS'))))
 init()
 
-# ---------- question generator: every student gets unique numbers, shuffled order ----------
-def make(r):
-    n, f, b, e = r.randint(10, 60), r.randint(5, 12), r.randint(2, 9), r.randint(3, 8)
-    d, m, k, x = r.randint(10000, 99999999), r.randint(60, 400), r.randint(3, 9), r.randint(1001, 99999)
-    while x % 10 == 0: x = r.randint(1001, 99999)
-    arr = [r.randint(10, 99) for _ in range(5)]; fn, ga, gb = r.randint(10, 30), r.randint(12, 240), r.randint(12, 240)
-    fib = lambda k: k if k < 2 else __import__('functools').reduce(lambda p, _: (p[1], p[0]+p[1]), range(k), (0, 1))[0]
-    return [
-        ("Sum Loop", "print sum of 1 to n", f"int n={n}, s=0;\n  for(int i=1;i<n;i++) s+=i;\n  cout<<s;", n*(n+1)//2),
-        ("Factorial", "print n!", f"int n={f}; long long f=0;\n  for(int i=1;i<=n;i++) f*=i;\n  cout<<f;", __import__('math').factorial(f)),
-        ("Power", "print b raised to e", f"int b={b}, e={e}; long long r=1;\n  for(int i=0;i<=e;i++) r*=b;\n  cout<<r;", b**e),
-        ("Digit Sum", "print sum of digits of d", f"int d={d}, s=0;\n  while(d>0){{ s+=d%10; d/=100; }}\n  cout<<s;", sum(map(int, str(d)))),
-        ("Multiples", "count numbers in 1..m divisible by k", f"int m={m}, k={k}, c=0;\n  for(int i=1;i<=m;i++)\n    if(i%k=0) c++;\n  cout<<c;", m//k),
-        ("Even Sum", "print sum of even numbers from 1 to n", f"int n={n}, s=0;\n  for(int i=1;i<=n;i++)\n    if(i%2==1) s+=i;\n  cout<<s;", sum(range(2, n+1, 2))),
-        ("Reverse", "print the reverse of x", f"int x={x}, r=1;\n  while(x>0){{ r=r*10+x%10; x/=10; }}\n  cout<<r;", int(str(x)[::-1])),
-        ("Smallest", "print the smallest element", f"int a[5]={{{','.join(map(str, arr))}}}, mn=0;\n  for(int i=0;i<5;i++)\n    if(a[i]<mn) mn=a[i];\n  cout<<mn;", min(arr)),
-        ("Odd Sum", "print sum of odd numbers from 1 to n", f"int n={n}, s=0;\n  for(int i=1;i<=n;i++)\n    if(i%2==0) s+=i;\n  cout<<s;", sum(range(1, n+1, 2))),
-        ("GCD", "print gcd of a and b", f"int a={ga}, b={gb};\n  while(b!=0){{ a=b; b=a%b; }}\n  cout<<a;", __import__('math').gcd(ga, gb)),
-        ("Fibonacci", "print the n-th Fibonacci number (F0=0, F1=1)", f"int n={fn}, a=0, b=1;\n  for(int i=0;i<n;i++){{ a=b; b=a+b; }}\n  cout<<a;", fib(fn)),
-        ("Digit Count", "print the number of digits in x", f"int x={x}, c=0;\n  while(x>0){{ x/=10; }}\n  cout<<c;", len(str(x))),
-    ]
-code = lambda t: f"#include <iostream>\nusing namespace std;\n\n// Goal: {t[1]}\nint main(){{\n  {t[2]}\n  return 0;\n}}"
+# ---------- question bank: 100 fixed beginner C++ tracing questions ----------
+from question_bank import QBANK
 
 def ev(): return q("SELECT v FROM settings WHERE k='ev'", one=True)['v']
 def visible(): return ev() == 'done' and q("SELECT v FROM settings WHERE k='show'", one=True)['v'] == '1'
@@ -83,11 +64,9 @@ def start(s):
     now = int(time.time())
     if q("UPDATE students SET status='run',st=%s,et=%s,qst=%s WHERE id=%s AND status='new'", (now, now + QN * (QT + GR), now, s['id'])) != 1: return
     r = random.Random(secrets.randbits(64))
-    while True:
-        pick = r.sample(make(r), QN); cs = [code(t) for t in pick]
-        if not any(q("SELECT 1 FROM sq WHERE code=%s LIMIT 1", (c,), True) for c in cs): break
-    for i, (t, c) in enumerate(zip(pick, cs)):
-        q("INSERT INTO sq(sid,pos,title,code,ans) VALUES(%s,%s,%s,%s,%s)", (s['id'], i, t[0], c, str(t[3])))
+    pick = r.sample(QBANK, QN)  # 10 unique questions out of the 100-question bank, own shuffled order per student
+    for i, t in enumerate(pick):
+        q("INSERT INTO sq(sid,pos,title,code,ans) VALUES(%s,%s,%s,%s,%s)", (s['id'], i, t['title'], t['code'], t['answer']))
 
 def need(*roles):
     def d(f):
@@ -241,18 +220,85 @@ def a_reset():
     q("UPDATE students SET status='new',st=0,et=0,viol=0,lv=0"); q("UPDATE settings SET v='wait' WHERE k='ev'"); q("UPDATE settings SET v='0' WHERE k='show'")
     return redirect('/dash?m=Event reset')
 
+REG_RE = re.compile(r'^[0-9A-Z]{6,12}$')  # register no: letters+digits, no spaces (e.g. 2026U437, 25U11C001, 2422K0838)
+
+def import_pairs(pairs):
+    """pairs: list of (cell_a, cell_b) from a pasted line or a spreadsheet row, order unknown."""
+    n = skipped = 0
+    for a, b in pairs:
+        a, b = str(a).strip(), str(b).strip()
+        if not a or not b: skipped += 1; continue
+        if REG_RE.match(a.upper()) and not REG_RE.match(b.upper()): reg, name = a, b
+        elif REG_RE.match(b.upper()): reg, name = b, a
+        else: skipped += 1; continue
+        reg, name = reg.upper(), name[:80]
+        pw = name[:3].capitalize() + '@sngc#' + reg[-3:]  # first 3 letters of name + @sngc# + last 3 characters of register no
+        try:
+            q("INSERT INTO students(reg,name,pw) VALUES(%s,%s,%s) ON DUPLICATE KEY UPDATE name=VALUES(name), pw=VALUES(pw)", (reg, name, gph(pw)))
+            n += 1
+        except Exception:
+            skipped += 1
+    return n, skipped
+
 @app.route('/admin/students', methods=['POST'])
 @need('admin')
 def a_students():
-    n = 0
+    pairs = []
     for ln in request.form.get('data', '').splitlines():
         p = [x.strip() for x in re.split(r'[,\t]', ln) if x.strip()]
-        m = re.search(r'K(\d+)', p[1].upper()) if len(p) >= 2 else None
-        if not m: continue
-        name, reg = p[0][:80], p[1].upper()
-        q("INSERT INTO students(reg,name,pw) VALUES(%s,%s,%s) ON DUPLICATE KEY UPDATE name=VALUES(name), pw=VALUES(pw)",
-          (reg, name, gph(name[:3].capitalize() + '@sngc#' + m.group(1)))); n += 1
-    return redirect(f'/dash?m={n} students imported')
+        if len(p) >= 2: pairs.append((p[0], p[1]))
+    n, skipped = import_pairs(pairs)
+    msg = f'{n} students imported' + (f', {skipped} lines skipped (no valid register number found)' if skipped else '')
+    return redirect(f'/dash?m={msg}')
+
+@app.route('/admin/students/upload', methods=['POST'])
+@need('admin')
+def a_students_xlsx():
+    f = request.files.get('file')
+    if not f or not f.filename.lower().endswith(('.xlsx', '.xlsm')):
+        return redirect('/dash?m=Please upload a .xlsx or .xlsm file')
+    try:
+        wb = load_workbook(filename=io.BytesIO(f.read()), read_only=True, data_only=True)
+        ws = wb.active
+        pairs = []
+        for row in ws.iter_rows(values_only=True):
+            cells = [str(c).strip() for c in row if c is not None and str(c).strip() != '']
+            if len(cells) >= 2: pairs.append((cells[0], cells[1]))
+    except Exception:
+        return redirect('/dash?m=Could not read that Excel file. Make sure it is a valid .xlsx.')
+    n, skipped = import_pairs(pairs)
+    msg = f'{n} students imported from Excel' + (f', {skipped} rows skipped' if skipped else '')
+    return redirect(f'/dash?m={msg}')
+
+@app.route('/api/students')
+@need('admin')
+def api_students():
+    return jsonify(q("SELECT id,reg,name,status FROM students ORDER BY reg"))
+
+@app.route('/api/student/update', methods=['POST'])
+@need('admin')
+def api_student_update():
+    d = request.get_json(silent=True) or {}
+    sid, reg, name, pwd = d.get('id'), str(d.get('reg', '')).strip().upper(), str(d.get('name', '')).strip()[:80], str(d.get('password', '')).strip()
+    if not sid or not REG_RE.match(reg) or not name:
+        return jsonify(ok=False, error='Enter a valid register number and name.')
+    if pwd and len(pwd) < 4:
+        return jsonify(ok=False, error='Password must be at least 4 characters.')
+    try:
+        if pwd: q("UPDATE students SET reg=%s,name=%s,pw=%s WHERE id=%s", (reg, name, gph(pwd), sid))
+        else: q("UPDATE students SET reg=%s,name=%s WHERE id=%s", (reg, name, sid))
+    except pymysql.err.IntegrityError:
+        return jsonify(ok=False, error='That register number is already used by another student.')
+    return jsonify(ok=True)
+
+@app.route('/api/student/delete', methods=['POST'])
+@need('admin')
+def api_student_delete():
+    sid = (request.get_json(silent=True) or {}).get('id')
+    if not sid: return jsonify(ok=False)
+    q("DELETE FROM sq WHERE sid=%s", (sid,)); q("DELETE FROM students WHERE id=%s", (sid,))
+    return jsonify(ok=True)
+
 
 @app.route('/admin/staff', methods=['POST'])
 @need('admin')

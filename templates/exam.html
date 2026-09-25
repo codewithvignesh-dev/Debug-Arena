@@ -28,8 +28,8 @@ setInterval(()=>{if(!live)return;const s=Math.max(0,Math.round((endAt-Date.now()
 function send(){const a=$('ans').value.trim();if(busy||!a)return;busy=true;api('/api/answer',{a,n:cq}).then(show).catch(()=>busy=false)}
 $('go').onclick=send;$('ans').onkeydown=e=>{if(e.key==='Enter')send()};
 function bad(){if(!live||lock)return;lock=true;setTimeout(()=>lock=false,3000);api('/api/viol',{}).then(d=>{if(d.st!=='run')return show(d);
- if(d.v==1)$('wt').textContent='Warning 1 of 3: you left the exam tab. If you Do it again the Invigilator staff will be notified.';
- else if(d.v==2)$('wt').textContent='Warning 2 of 3: staff has been notified. If you done this One more time you will be disqualified.';else return;$('warn').classList.remove('hidden')})}
+ if(d.v==1)$('wt').textContent='Warning 1 of 3: you left the exam tab. Do it again and staff will be notified.';
+ else if(d.v==2)$('wt').textContent='Warning 2 of 3: staff has been notified. One more time and you are disqualified.';else return;$('warn').classList.remove('hidden')})}
 document.addEventListener('visibilitychange',()=>{if(document.hidden)bad()});addEventListener('blur',bad);
 ['copy','cut','paste','contextmenu','dragstart'].forEach(e=>addEventListener(e,ev=>ev.preventDefault()));
 addEventListener('keydown',e=>{if(e.key==='F12'||(e.ctrlKey&&'cvxuspaCVXUSPA'.includes(e.key)))e.preventDefault()});

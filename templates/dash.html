@@ -14,16 +14,25 @@
 <button name="v" value="wait" class="glass px-4 py-2">Waiting</button><button name="v" value="live" class="btn">Go live</button><button name="v" value="done" class="glass px-4 py-2 text-emerald-300">Mark completed</button></form>
 <form method="post" action="/admin/show" class="inline"><input type="hidden" name="_t" value="{{t}}"><button class="glass px-4 py-2 text-sm">Show / hide results table</button></form>
 <form method="post" action="/admin/reset" class="inline" onsubmit="return confirm('Delete all attempts and alerts?')"><input type="hidden" name="_t" value="{{t}}"><button class="glass px-4 py-2 text-sm text-rose-300">Reset event</button></form>
-<form method="post" action="/admin/students" class="space-y-2"><input type="hidden" name="_t" value="{{t}}"><label class="text-sm text-slate-400">Import students — one per line: Name, RegNo</label>
-<textarea name="data" rows="4" class="inp mono text-sm" placeholder="Vigneshwaran P, 2526K1350"></textarea><button class="btn">Import students</button></form>
+<form method="post" action="/admin/students" class="space-y-2"><input type="hidden" name="_t" value="{{t}}"><label class="text-sm text-slate-400">Import students — one per line, comma or tab separated. Either order works: "Name, RegNo" or "RegNo, Name" (you can paste straight from a spreadsheet, header row is ignored)</label>
+<textarea name="data" rows="6" class="inp mono text-sm" placeholder="2026U437	Akhileshwari G"></textarea><button class="btn">Import students</button></form>
+<form method="post" action="/admin/students/upload" enctype="multipart/form-data" class="flex flex-wrap items-center gap-2"><input type="hidden" name="_t" value="{{t}}">
+<label class="text-sm text-slate-400">or upload an Excel sheet (.xlsx, columns Register No / Name in either order):</label>
+<input type="file" name="file" accept=".xlsx,.xlsm" required class="text-sm text-slate-300"><button class="glass px-4 py-2 text-sm">Upload &amp; import</button></form>
 <div class="border-t border-white/10 pt-4 space-y-3"><h2 class="font-bold">Staff accounts</h2>
 <form method="post" action="/admin/staff" class="flex flex-wrap gap-2"><input type="hidden" name="_t" value="{{t}}"><input class="inp" style="width:11rem" name="u" placeholder="Username" required><input class="inp" style="width:11rem" name="p" type="password" placeholder="Password (min 6)" required><button class="btn">Add staff</button></form>
 {% for x in staff %}<form method="post" action="/admin/staff/del" class="flex items-center justify-between glass px-4 py-2 text-sm" onsubmit="return confirm('Remove this staff account?')"><input type="hidden" name="_t" value="{{t}}"><input type="hidden" name="id" value="{{x.id}}"><span class="mono">{{x.username}}</span><button class="text-rose-300">Remove</button></form>{% else %}<p class="text-slate-500 text-sm">No staff accounts yet.</p>{% endfor %}</div></div>{% endif %}</section>
+{% if role=='admin' %}<section class="glass p-5">
+<div class="flex flex-wrap items-center justify-between gap-3 mb-3"><h2 class="font-bold">Manage students</h2><input id="stu_q" class="inp text-sm" style="max-width:240px" placeholder="Search register no or name"></div>
+<p class="text-slate-400 text-xs mb-3">Edit a row and click Save to rename, change the register number, or set a new password (leave the password box blank to keep the current one). Delete removes that student's login and attempt data.</p>
+<div class="overflow-x-auto max-h-[28rem] overflow-y-auto"><table class="w-full text-sm">
+<thead class="text-left text-slate-400 sticky top-0" style="background:#0a0e1a"><tr><th class="p-2">Register No</th><th>Name</th><th>Status</th><th>New password</th><th></th></tr></thead>
+<tbody id="stu_tb"><tr><td colspan="5" class="p-3 text-slate-500">Loading…</td></tr></tbody></table></div></section>{% endif %}
 <section class="glass p-5"><div class="flex items-center justify-between mb-3"><h2 class="font-bold">Results</h2><a id="exp" href="/export.xlsx" class="btn text-sm hidden">Export Excel</a></div>
 <p id="lock" class="text-slate-400 text-sm">Results appear here after the event is marked completed and the admin enables them.</p>
 <div id="res" class="hidden overflow-x-auto"><table class="w-full text-sm"><thead class="text-left text-slate-400"><tr><th class="p-2">Rank</th><th>Reg no</th><th>Name</th><th>Status</th><th>Score</th><th>Correct</th><th>Wrong</th><th>Skipped</th><th>Time</th><th>Warnings</th></tr></thead><tbody id="tb" class="divide-y divide-white/5"></tbody></table></div></section></main>
 <script>
-const $=i=>document.getElementById(i),esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const $=i=>document.getElementById(i),esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])),H={'Content-Type':'application/json','X-T':'{{t}}'};
 async function poll(){try{const d=await(await fetch('/api/stats')).json();
  for(const k of ['total','new','run','done','dq','correct','wrong','skipped'])$('s_'+k).textContent=d[k];
  $('evb').textContent={wait:'Waiting',live:'LIVE',done:'Completed'}[d.ev];$('pb').style.width=d.total?((d.done+d.dq)/d.total*100)+'%':'0';
@@ -31,4 +40,36 @@ async function poll(){try{const d=await(await fetch('/api/stats')).json();
  const ok=!!d.rows;$('res').classList.toggle('hidden',!ok);$('exp').classList.toggle('hidden',!ok);$('lock').classList.toggle('hidden',ok);
  if(ok)$('tb').innerHTML=d.rows.map(r=>'<tr><td class="p-2">'+r.rank+'</td><td class="mono">'+esc(r.reg)+'</td><td>'+esc(r.name)+'</td><td>'+esc(r.sl)+'</td><td class="font-bold">'+r.score+'/100</td><td class="text-emerald-300">'+r.c+'</td><td class="text-rose-300">'+r.w+'</td><td>'+r.un+'</td><td class="mono">'+(r.tt?Math.floor(r.tt/60)+':'+String(r.tt%60).padStart(2,'0'):'-')+'</td><td>'+r.viol+'</td></tr>').join('')}catch(e){}}
 poll();setInterval(poll,3000);
+
+// ---- Manage students (admin only) ----
+if($('stu_tb')){
+ let allStu=[];
+ function renderStu(){
+  const term=($('stu_q').value||'').toLowerCase();
+  const rows=allStu.filter(r=>r.reg.toLowerCase().includes(term)||r.name.toLowerCase().includes(term));
+  $('stu_tb').innerHTML=rows.length?rows.map(r=>'<tr data-id="'+r.id+'">'+
+   '<td class="p-2"><input class="inp mono text-xs" style="width:9rem" value="'+esc(r.reg)+'" data-f="reg"></td>'+
+   '<td><input class="inp text-xs" style="width:12rem" value="'+esc(r.name)+'" data-f="name"></td>'+
+   '<td class="text-xs text-slate-400">'+esc(r.status)+'</td>'+
+   '<td><input class="inp text-xs" style="width:10rem" placeholder="leave blank to keep" data-f="pw"></td>'+
+   '<td class="whitespace-nowrap"><button class="text-indigo-300 text-xs mr-3 save">Save</button><button class="text-rose-300 text-xs del">Delete</button></td></tr>').join('')
+   :'<tr><td colspan="5" class="p-3 text-slate-500">No students found.</td></tr>';
+ }
+ async function loadStu(){try{allStu=await(await fetch('/api/students')).json();renderStu()}catch(e){$('stu_tb').innerHTML='<tr><td colspan="5" class="p-3 text-rose-300">Could not load students.</td></tr>'}}
+ $('stu_q').addEventListener('input',renderStu);
+ $('stu_tb').addEventListener('click',async e=>{
+  const tr=e.target.closest('tr[data-id]'); if(!tr) return; const id=tr.dataset.id;
+  if(e.target.classList.contains('save')){
+   const reg=tr.querySelector('[data-f=reg]').value.trim(),name=tr.querySelector('[data-f=name]').value.trim(),password=tr.querySelector('[data-f=pw]').value.trim();
+   const d=await(await fetch('/api/student/update',{method:'POST',headers:H,body:JSON.stringify({id,reg,name,password})})).json();
+   if(!d.ok){alert(d.error||'Could not save changes.');return}
+   await loadStu();
+  }
+  if(e.target.classList.contains('del')){
+   if(!confirm('Delete this student? This also removes their attempt data.')) return;
+   await fetch('/api/student/delete',{method:'POST',headers:H,body:JSON.stringify({id})}); await loadStu();
+  }
+ });
+ loadStu();
+}
 </script>{% endblock %}
